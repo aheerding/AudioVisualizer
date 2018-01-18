@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8" />
+	<link href="https://fonts.googleapis.com/css?family=Bungee+Inline" rel="stylesheet">
+	<title>Web Audio Visualizer</title>
+	<style>
+        #title {
+            font-family: 'Bungee Inline', cursive;
+            font-size: 60pt;
+            text-align: center;
+            color: white;
+        }
+
+        body {
+            background-image: url("media/galaxy.jpg");
+            background-attachment: fixed;
+            font-family: tahoma, verdana, sans serif;
+            font-size: 14pt;
+            text-align: center;
+            color: white;
+          }
+
+        canvas {
+            margin-left:10px;
+            margin-top:10px;
+            box-shadow: 4px 4px 8px rgba(0,0,0,0.5);
+            background: black;
+        }
+        
+        hr {
+            width: 640px;
+        }
+      
+        #controls{
+            margin-left:10px;
+            margin-top:10px;
+        }
+        
+        #audio {
+            background-color: rgba(128, 128, 128, 0.2);
+        }
+	  
+        #track, #status {
+            padding-bottom: 10px;
+        }
+
+        #checkboxes, #changes, #node {
+            padding-top: 10px;
+            padding-bottom: 10px;
+        }
+	</style>
+	<script>
+	// An IIFE ("Iffy") - see the notes in mycourses
+	(function(){
+		"use strict";
+		
+		var NUM_SAMPLES = 256;
+		var SOUND_1 = 'media/Ice Flow.mp3';
+		var SOUND_2 = 'media/Laser Groove.mp3';
+		var SOUND_3 = 'media/The Picard Song.mp3';
+		var audioElement;
+		var gainAmount = 1;
+		var gainNode;
+		var analyserNode;
+		var canvas,ctx;
+        var circle = true;
+        var curves = false;
+        var lines = true;
+        var gStrokestyle;
+		
+		function init(){
+			// set up canvas stuff
+			canvas = document.querySelector('canvas');
+			ctx = canvas.getContext("2d");
+			
+			// get reference to <audio> element on page
+			audioElement = document.querySelector('audio');
+			
+			// call our helper function and get an analyser node
+			analyserNode = createWebAudioContextWithAnalyserNode(audioElement);
+			
+			// get sound track <select> and Full Screen button working
+			setupUI();
+			
+			// load and play default sound into audio element
+			playStream(audioElement,SOUND_1);
+			
+			// start animation loop
+			update();
+		}
+		
+		
+		function createWebAudioContextWithAnalyserNode(audioElement) {
+			var audioCtx, analyserNode, sourceNode;
+			// create new AudioContext
+			// The || is because WebAudio has not been standardized across browsers yet
+			// http://webaudio.github.io/web-audio-api/#the-audiocontext-interface
+			audioCtx = new (window.AudioContext || window.webkitAudioContext);
+			
+			// create an analyser node
+			analyserNode = audioCtx.createAnalyser();
+
+			//create a gain node
+			gainNode = audioCtx.createGain();
+			gainNode.gain.value = gainAmount;
+			/*
+			We will request NUM_SAMPLES number of samples or "bins" spaced equally 
+			across the sound spectrum.
+			
+			If NUM_SAMPLES (fftSize) is 256, then the first bin is 0 Hz, the second is 172 Hz, 
+			the third is 344Hz. Each bin contains a number between 0-255 representing 
+			the amplitude of that frequency.
+			*/ 
+			
+			// fft stands for Fast Fourier Transform
+			analyserNode.fftSize = NUM_SAMPLES;
+			
+			// this is where we hook up the <audio> element to the analyserNode
+			sourceNode = audioCtx.createMediaElementSource(audioElement); 
+
+			// here we connect to the destination i.e. speakers
+			sourceNode.connect(gainNode);
+			gainNode.connect(analyserNode);
+			analyserNode.connect(audioCtx.destination);
+			return analyserNode;
+		}
+		
+		function setupUI(){
+			document.querySelector("#trackSelect").onchange = function(e){
+				playStream(audioElement,e.target.value);
+			};
+			
+			document.querySelector("#fsButton").onclick = function(){
+				requestFullscreen(canvas);
+			};
+            
+            // Gets status of circleBox
+			document.getElementById('circleBox').onchange = function(e){
+                if (e.target.checked){
+                    circle = true;
+                }
+                else {
+                    circle = false;
+                }
+            };
+            
+            // Gets status of curveBox
+			document.getElementById('curveBox').onchange = function(e) {
+			    if(e.target.checked){
+			        curves = true;
+				}
+				else{
+                    curves = false;
+				}
+			};
+            
+            // Gets status of lineBox
+			document.getElementById('lineBox').onchange = function (e) {
+				if(e.target.checked){
+				    lines = true;
+				}
+				else {
+				    lines = false;
+				}
+            };
+		}
+		
+		function playStream(audioElement,path){
+			audioElement.src = path;
+			audioElement.play();
+			audioElement.volume = 0.2;
+			document.querySelector('#status').innerHTML = "Now playing: " + path;
+		}
+
+        function update() {
+            // this schedules a call to the update() method in 1/60 seconds
+            requestAnimationFrame(update);
+
+			/*
+			 Nyquist Theorem
+			 http://whatis.techtarget.com/definition/Nyquist-Theorem
+			 The array of data we get back is 1/2 the size of the sample rate
+			 */
+
+            // create a new array of 8-bit integers (0-255)
+            var data = new Uint8Array(NUM_SAMPLES/8);
+
+            // populate the array with the frequency data
+            // notice these arrays can be passed "by reference"
+            analyserNode.getByteFrequencyData(data);
+
+            // DRAW!
+            ctx.clearRect(0,0,800,600);
+			gainAmount = document.querySelector("#gainSlider").value;
+            gainNode.gain.value = gainAmount;
+            
+            // variables for 'lines'
+            var barWidth = 6;
+            var barSpacing = 3;
+            var barHeight = 100;
+            var topSpacing = 50;
+            var ctrlX = 320;
+            var ctrlY = 0;
+
+            // loop through the data and draw!
+            for(var i=0; i<data.length; i++) {
+
+                var grad = ctx.createRadialGradient(322, 200, 75, 322, 200, 250);
+                
+                // if value is blue, display Pacific Dream
+                if(document.querySelector("#gradColor").value =='blue')
+				{
+                    grad.addColorStop(0, '#0f3443');
+                    grad.addColorStop(1 / 4, '#34e89e');
+                    grad.addColorStop(2 / 4, '#0f3443');
+                    grad.addColorStop(3 / 4, '#34e89e');
+                    grad.addColorStop(1, '#0f3443');
+				}
+                
+                // if value is red, then display Ibiza Sunset
+				if(document.querySelector("#gradColor").value =='red')
+				{
+                    grad.addColorStop(0, '#ee0979');
+                    grad.addColorStop(1 / 4, '#ff6a00');
+                    grad.addColorStop(2 / 4, '#ee0979');
+                    grad.addColorStop(3 / 4, '#ff6a00');
+                    grad.addColorStop(1, '#ee0979');
+				}
+                
+                // if value is green, then display Easy Med
+                if(document.querySelector("#gradColor").value =='green')
+                {
+                    grad.addColorStop(0, '#DCE35B');
+                    grad.addColorStop(1 / 4, '#45B649');
+                    grad.addColorStop(2 / 4, '#DCE35B');
+                    grad.addColorStop(3 / 4, '#45B649');
+                    grad.addColorStop(1, '#DCE35B');
+                }
+                
+                // set strokestyle to whichever if statement is used
+                gStrokestyle = grad;
+                ctx.fillStyle = gStrokestyle;
+                
+                // if lines is checked, then display
+				if(lines){
+                    ctx.fillRect(324+i * (barWidth + barSpacing),topSpacing + 48-data[i],barWidth,barHeight);
+                    ctx.fillRect(324+i * (barWidth + barSpacing),(topSpacing + 102) + 50+data[i],barWidth,barHeight);
+
+                    ctx.fillRect(314-i * (barWidth + barSpacing),topSpacing + 48-data[i],barWidth,barHeight);
+                    ctx.fillRect(314-i * (barWidth + barSpacing),(topSpacing + 102) + 50+data[i],barWidth,barHeight);
+
+                }
+                
+                // if circle is checked, then display
+                if (circle){
+                    var percent = data[1]/255;
+                    var slider = document.querySelector("#slider1").value;
+                    var maxRadius = slider * 200;
+                    var circleRadius = percent*maxRadius;
+                    
+                    ctx.beginPath();
+                    
+                    // if value is blue, display Pacific Dream color
+                    if(document.querySelector("#gradColor").value =='blue')
+					{
+                        ctx.fillStyle = makeColor(52, 232, 158, .34-percent/3.0);
+					}
+                    
+                    // if value is red, then display Ibiza Sunset color
+                    if(document.querySelector("#gradColor").value =='red')
+					{
+                        ctx.fillStyle = makeColor(238, 9, 121, .34-percent/3.0);
+					}
+                    
+                    // if value is green, then display Easy Med color
+                    if(document.querySelector("#gradColor").value =='green')
+                    {
+                        ctx.fillStyle = makeColor(220, 227, 91, .34-percent/3.0);
+                    }
+                    ctx.arc(canvas.width/2, canvas.height/2, circleRadius, 0, 2*Math.PI, false);
+                    ctx.fill();
+                    ctx.closePath();
+                    
+                    ctx.beginPath();
+                    
+                    // if value is blue, display Pacific Dream color
+                    if(document.querySelector("#gradColor").value =='blue')
+                    {
+                        ctx.fillStyle = makeColor(15, 52, 67, .10-percent/10.0);
+                    }
+                    
+                    // if value is red, then display Ibiza Sunset color
+                    if(document.querySelector("#gradColor").value =='red')
+                    {
+                        ctx.fillStyle = makeColor(255, 106, 0, .10-percent/10.0);
+                    }
+                    
+                    // if value is green, then display Easy Med color
+                    if(document.querySelector("#gradColor").value =='green')
+                    {
+                        ctx.fillStyle = makeColor(69, 182, 73, .10-percent/10.0);
+                    }
+                    ctx.arc(canvas.width/2, canvas.height/2, circleRadius*1.5, 0, 2*Math.PI, false);
+                    ctx.fill();
+                    ctx.closePath();
+                    
+                    ctx.save();
+                    ctx.beginPath();
+                    
+                    // if value is blue, display Pacific Dream color
+                    if(document.querySelector("#gradColor").value =='blue')
+                    {
+                        ctx.fillStyle = makeColor(52, 232, 158, .5-percent/5.0);
+                    }
+                    
+                    // if value is red, then display Ibiza Sunset color
+                    if(document.querySelector("#gradColor").value =='red')
+                    {
+                        ctx.fillStyle = makeColor(238, 9, 121, .5-percent/5.0);
+                    }
+                    
+                    // if value is green, then display Easy Med color
+                    if(document.querySelector("#gradColor").value =='green')
+                    {
+                        ctx.fillStyle = makeColor(220, 227, 91, .5-percent/5.0);
+                    }
+                    ctx.arc(canvas.width/2, canvas.height/2, circleRadius*.50, 0, 2*Math.PI, false);
+                    ctx.fill();
+                    ctx.closePath();
+                    ctx.restore();
+                }
+                
+                // if curves is checked, then display
+				if(curves) {
+                    ctx.strokeStyle =  getRandomColor();
+                    ctrlY = topSpacing + 256-data[i];
+                    ctx.beginPath();
+                    ctx.moveTo(640, 100);
+                    ctx.quadraticCurveTo(ctrlX, ctrlY, 640, 300);
+                    ctx.stroke();
+
+                    ctx.beginPath();
+                    ctx.moveTo(0, 100);
+                    ctx.quadraticCurveTo(ctrlX, ctrlY, 0, 300);
+                    ctx.stroke();
+				}
+            }
+
+        }
+
+		function makeColor(red, green, blue, alpha){
+   			var color='rgba('+red+','+green+','+blue+', '+alpha+')';
+   			return color;
+		}
+
+        function getRandomColor(){
+            var red = Math.round(Math.random()*200+55);
+            var green = Math.round(Math.random()*200+55);
+            var blue=Math.round(Math.random()*200+55);
+            var color='rgb('+red+','+green+','+blue+')';
+            return color;
+        }
+
+
+        // FULL SCREEN MODE
+		function requestFullscreen(element) {
+			if (element.requestFullscreen) {
+			  element.requestFullscreen();
+			} else if (element.mozRequestFullscreen) {
+			  element.mozRequestFullscreen();
+			} else if (element.mozRequestFullScreen) { // camel-cased 'S' was changed to 's' in spec
+			  element.mozRequestFullScreen();
+			} else if (element.webkitRequestFullscreen) {
+			  element.webkitRequestFullscreen();
+			}
+			// .. and do nothing if the method is not supported
+		};
+		
+		
+		window.addEventListener("load",init);
+	}());
+		
+	</script>
+</head>
+<body>
+	<div id="title">Audio Visualizer</div>
+    <div id="audio">
+        <canvas id="canvas" width="640" height="400"></canvas>
+        <div id="controls">
+            <audio controls loop></audio>
+            <br>
+            <div id="track">
+            <label>Track: 
+                <select id="trackSelect" >
+                    <option value="media/Ice Flow.mp3">Ice Flow</option>
+                    <option value="media/Laser Groove.mp3">Laser Groove</option>
+                    <option value="media/The Picard Song.mp3">The Picard Song</option>
+                </select>
+            </label>
+            <button id="fsButton">Go Full Screen</button><br>
+            </div>
+            <hr>
+            <div id="checkboxes"><strong>Image Additions</strong><br>
+                <label for="circleBox">Circle
+                    <input type="checkbox" id="circleBox" checked/>
+                </label>
+                <label for="curveBox">Curves
+                    <input type="checkbox" id="curveBox"/>
+                </label>
+                <label for="lineBox">Lines
+                    <input type="checkbox" id="lineBox" checked/>
+                </label>
+            </div>
+            <hr>
+            <div id="changes"><strong>Image Alterations</strong><br>
+                <label for="slider1">Circle Size</label>
+                <input id="slider1" type ="range" min ="0.1" max="1.0" step ="0.1" value ="0.5"/><br>
+                <label>Grad Color</label>
+                <select id="gradColor">
+                    <option value = "blue">Pacific Dream</option>
+                    <option value="red">Ibiza Sunset</option>
+                    <option value="green">Easy Med</option>
+                </select>
+            </div>
+            <hr>
+            <div id="node"><strong>Node Alterations</strong><br>
+                <label for="gainSlider">Gain</label>
+                <input id="gainSlider" type="range" min="1.0" max="2.0" step="0.1" value="1.0"/>
+            </div>
+            <hr>
+            <p id="status">???</p>
+        </div>
+    </div>
+</body>
+</html>
